@@ -1,75 +1,44 @@
-// Package pipe provides a net.Conn implemented by net.Pipe and related dialing and listening functionality.
-// For a buffered connection pipe use: https://pkg.go.dev/google.golang.org/grpc/test/bufconna
-
 package pipe
 
 import (
 	"context"
-	"fmt"
 	"net"
-	"sync"
-	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
 )
 
-type Listener struct {
-	cancel context.CancelFunc
-	ctx    context.Context
-	cconn  chan net.Conn
-	once   sync.Once
+type Listener interface {
+	net.Listener
+
+	Dial() (net.Conn, error)
+	DialContext(ctx context.Context) (net.Conn, error)
 }
 
-func NewListener() *Listener {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &Listener{
-		cancel: cancel,
-		ctx:    ctx,
-		cconn:  make(chan net.Conn, 1),
+type Pipe struct {
+	Listener
+}
+
+func NewNetPipe(sz int) *Pipe {
+	return &Pipe{
+		Listener: NewNet(),
 	}
 }
 
-// Add conn forward the given conn to the listener
-func (pl *Listener) AddConn(c net.Conn) {
-	select {
-	case <-pl.ctx.Done():
-	case pl.cconn <- c:
-	}
+func NewBufferPipe(sz int) *Pipe {
+	return &Pipe{Listener: bufconn.Listen(sz)}
 }
 
-func (pl *Listener) Dialer(addr string, _ time.Duration) (net.Conn, error) {
-	return pl.ContextDialer(context.Background(), addr)
+func (bl *Pipe) dialer(context.Context, string) (net.Conn, error) {
+	return bl.Dial()
 }
 
-func (pl *Listener) ContextDialer(_ context.Context, _ string) (cclient net.Conn, _ error) {
-	var cserver net.Conn
-	cclient, cserver = net.Pipe()
-	pl.AddConn(cserver)
-	return
-}
-
-// Listener
-var _ net.Listener = (*Listener)(nil)
-
-func (pl *Listener) Addr() net.Addr { return pl }
-func (pl *Listener) Accept() (net.Conn, error) {
-	select {
-	case conn := <-pl.cconn:
-		if conn != nil {
-			return conn, nil
-		}
-	case <-pl.ctx.Done():
-		return nil, pl.ctx.Err()
+func (bl *Pipe) ClientConn(ctx context.Context, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
+	mendatoryOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithContextDialer(bl.dialer), // set pipe dialer
 	}
 
-	return nil, fmt.Errorf("pipe listener is closing")
+	return grpc.DialContext(ctx, "buf", append(opts, mendatoryOpts...)...)
 }
-func (pl *Listener) Close() error {
-	pl.cancel()
-	pl.once.Do(func() { close(pl.cconn) })
-	return nil
-}
-
-// Addr
-var _ net.Addr = (*Listener)(nil)
-
-func (pl *Listener) Network() string { return "pipe_network" }
-func (pl *Listener) String() string  { return "pipe" }

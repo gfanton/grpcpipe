@@ -1,3 +1,6 @@
+// Package pipe provides a net.Conn implemented by net.Pipe and related dialing and listening functionality.
+// For a buffered connection pipe use: https://pkg.go.dev/google.golang.org/grpc/test/bufconna
+
 package pipe
 
 import (
@@ -8,16 +11,16 @@ import (
 	"time"
 )
 
-type PipeListener struct {
+type Listener struct {
 	cancel context.CancelFunc
 	ctx    context.Context
 	cconn  chan net.Conn
 	once   sync.Once
 }
 
-func NewPipeListener() *PipeListener {
+func NewListener() *Listener {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &PipeListener{
+	return &Listener{
 		cancel: cancel,
 		ctx:    ctx,
 		cconn:  make(chan net.Conn, 1),
@@ -25,18 +28,18 @@ func NewPipeListener() *PipeListener {
 }
 
 // Add conn forward the given conn to the listener
-func (pl *PipeListener) AddConn(c net.Conn) {
+func (pl *Listener) AddConn(c net.Conn) {
 	select {
 	case <-pl.ctx.Done():
 	case pl.cconn <- c:
 	}
 }
 
-func (pl *PipeListener) Dialer(addr string, _ time.Duration) (net.Conn, error) {
+func (pl *Listener) Dialer(addr string, _ time.Duration) (net.Conn, error) {
 	return pl.ContextDialer(context.Background(), addr)
 }
 
-func (pl *PipeListener) ContextDialer(ctx context.Context, addr string) (cclient net.Conn, _ error) {
+func (pl *Listener) ContextDialer(_ context.Context, _ string) (cclient net.Conn, _ error) {
 	var cserver net.Conn
 	cclient, cserver = net.Pipe()
 	pl.AddConn(cserver)
@@ -44,10 +47,10 @@ func (pl *PipeListener) ContextDialer(ctx context.Context, addr string) (cclient
 }
 
 // Listener
-var _ net.Listener = (*PipeListener)(nil)
+var _ net.Listener = (*Listener)(nil)
 
-func (pl *PipeListener) Addr() net.Addr { return pl }
-func (pl *PipeListener) Accept() (net.Conn, error) {
+func (pl *Listener) Addr() net.Addr { return pl }
+func (pl *Listener) Accept() (net.Conn, error) {
 	select {
 	case conn := <-pl.cconn:
 		if conn != nil {
@@ -59,14 +62,14 @@ func (pl *PipeListener) Accept() (net.Conn, error) {
 
 	return nil, fmt.Errorf("pipe listener is closing")
 }
-func (pl *PipeListener) Close() error {
+func (pl *Listener) Close() error {
 	pl.cancel()
 	pl.once.Do(func() { close(pl.cconn) })
 	return nil
 }
 
 // Addr
-var _ net.Addr = (*PipeListener)(nil)
+var _ net.Addr = (*Listener)(nil)
 
-func (pl *PipeListener) Network() string { return "pipe_network" }
-func (pl *PipeListener) String() string  { return "pipe" }
+func (pl *Listener) Network() string { return "pipe_network" }
+func (pl *Listener) String() string  { return "pipe" }

@@ -1,2 +1,2 @@
-# grpcpipe
+# grpcutil
 grpc lazy conn
